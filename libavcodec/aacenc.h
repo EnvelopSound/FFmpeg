@@ -45,6 +45,7 @@ typedef struct AACEncOptions {
     int pns;
     int tns;
     int ltp;
+    int pce;
     int pred;
     int mid_side;
     int intensity_stereo;
@@ -89,6 +90,50 @@ typedef struct AACQuantizeBandCostCacheEntry {
     uint16_t generation;
 } AACQuantizeBandCostCacheEntry;
 
+typedef struct AACPCEInfo {
+    int64_t layout;
+    int num_ele[4];                              ///< front, side, back, lfe
+    int pairing[3][8];                           ///< front, side, back
+    int index[4][8];                             ///< front, side, back, lfe
+    uint8_t config_map[16];                      ///< configs the encoder's channel specific settings
+    uint8_t reorder_map[16];                     ///< maps channels from lavc to aac order
+} AACPCEInfo;
+
+static const AACPCEInfo aac_pce_configs[] = {
+    {
+        .layout = AV_CH_LAYOUT_MONO,
+        .num_ele = { 1, 0, 0, 0 },
+        .pairing = { { 0 }, },
+        .index = { { 0 }, },
+        .config_map = { 1, TYPE_SCE, },
+        .reorder_map = { 0 },
+    },
+    {
+        .layout = AV_CH_LAYOUT_STEREO,
+        .num_ele = { 1, 0, 0, 0 },
+        .pairing = { { 1 }, },
+        .index = { { 0 }, },
+        .config_map = { 1, TYPE_CPE, },
+        .reorder_map = { 0, 1 },
+    },
+    {
+        .layout = AV_CH_LAYOUT_SURROUND,
+        .num_ele = { 2, 0, 0, 0 },
+        .pairing = { { 1, 0 }, },
+        .index = { { 0, 1 }, },
+        .config_map = { 2, TYPE_SCE, TYPE_CPE },
+        .reorder_map = { 2, 0, 1 },
+    },
+    {
+        .layout = AV_CH_LAYOUT_4POINT0,
+        .num_ele = { 2, 0, 1, 0 },
+        .pairing = { { 1, 0 }, { 0 }, { 0 }, },
+        .index = { { 0, 1 }, { 0 }, { 0 } },
+        .config_map = { 3, TYPE_SCE, TYPE_CPE, TYPE_SCE },
+        .reorder_map = { 2, 0, 1, 3 },
+    },
+};
+
 /**
  * AAC encoder context
  */
@@ -99,12 +144,15 @@ typedef struct AACEncContext {
     FFTContext mdct1024;                         ///< long (1024 samples) frame transform context
     FFTContext mdct128;                          ///< short (128 samples) frame transform context
     AVFloatDSPContext *fdsp;
-    float *planar_samples[8];                    ///< saved preprocessed input
+    AACPCEInfo pce;                              ///< PCE data, if needed
+    float *planar_samples[16];                   ///< saved preprocessed input
 
     int profile;                                 ///< copied from avctx
+    int needs_pce;                               ///< flag for non-standard layout
     LPCContext lpc;                              ///< used by TNS
     int samplerate_index;                        ///< MPEG-4 samplerate index
     int channels;                                ///< channel count
+    const uint8_t *reorder_map;                  ///< lavc to aac reorder map
     const uint8_t *chan_map;                     ///< channel configuration map
 
     ChannelElement *cpe;                         ///< channel elements
