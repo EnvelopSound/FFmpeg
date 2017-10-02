@@ -1800,6 +1800,12 @@ static OutputStream *new_audio_stream(OptionsContext *o, AVFormatContext *oc, in
 
         MATCH_PER_STREAM_OPT(audio_channels, i, audio_enc->channels, oc, st);
 
+        AVDictionaryEntry *output_layout = av_dict_get(o->g->codec_opts,
+                                                       "channel_layout",
+                                                       NULL, AV_DICT_MATCH_CASE);
+        if (output_layout)
+            ost->enc_ctx->channel_layout = strtoull(output_layout->value, NULL, 10);
+
         MATCH_PER_STREAM_OPT(sample_fmts, str, sample_fmt, oc, st);
         if (sample_fmt &&
             (audio_enc->sample_fmt = av_get_sample_fmt(sample_fmt)) == AV_SAMPLE_FMT_NONE) {
@@ -2523,7 +2529,10 @@ loop_end:
                            (count + 1) * sizeof(*f->sample_rates));
                 }
                 if (ost->enc_ctx->channels) {
-                    f->channel_layout = av_get_default_channel_layout(ost->enc_ctx->channels);
+                    if (ost->enc_ctx->channel_layout)
+                        f->channel_layout = ost->enc_ctx->channel_layout;
+                    else
+                        f->channel_layout = av_get_default_channel_layout(ost->enc_ctx->channels);
                 } else if (ost->enc->channel_layouts) {
                     count = 0;
                     while (ost->enc->channel_layouts[count])
