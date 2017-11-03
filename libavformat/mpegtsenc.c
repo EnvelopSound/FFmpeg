@@ -28,6 +28,7 @@
 #include "libavutil/opt.h"
 
 #include "libavcodec/internal.h"
+#include "libavcodec/put_bits.h"
 
 #include "avformat.h"
 #include "avio_internal.h"
@@ -260,6 +261,9 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
     MpegTSWrite *ts = s->priv_data;
     uint8_t data[SECTION_LENGTH], *q, *desc_length_ptr, *program_info_length_ptr;
     int val, stream_type, i, err = 0;
+    uint8_t channel_count, stream_count, coupled_stream_count, *buf;
+    PutBitContext pbc;
+    size_t buf_size, opus_audio_descriptor_size;
 
     q = data;
     put16(&q, 0xe000 | service->pcr_pid);
@@ -390,8 +394,36 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
                 *q++ = 'D';
             }
             if (st->codecpar->codec_id==AV_CODEC_ID_OPUS) {
-                /* 6 bytes registration descriptor, 4 bytes Opus audio descriptor */
-                if (q - data > SECTION_LENGTH - 6 - 4) {
+                /* opus_audio_descriptor length */
+                if (st->codecpar->extradata[18] == 255 &&
+                    st->codecpar->channels > 2) {
+                    /* channel_config_code 0x81 */
+                    channel_count = st->codecpar->channels;
+                    stream_count = st->codecpar->extradata[19];
+                    coupled_stream_count = st->codecpar->extradata[20];
+                    buf = av_mallocz_array(channel_count + 6, sizeof(uint8_t));
+                    if (!buf) {
+                        return AVERROR(ENOMEM);
+                    }
+                    init_put_bits(&pbc, buf, (channel_count + 6));
+                    put_bits(&pbc, av_ceil_log2_c(channel_count),
+                        st->codecpar->extradata[19] - 1);
+                    put_bits(&pbc, av_ceil_log2_c(stream_count + 1),
+                        st->codecpar->extradata[20]);
+                    for (i = 0; i < channel_count; i++) {
+                        put_bits(&pbc, av_ceil_log2_c(stream_count + coupled_stream_count + 1),
+                            st->codecpar->extradata[21 + i]);
+                    }
+                    flush_put_bits(&pbc);
+                    buf_size = put_bits_count(&pbc) / 8;
+                    opus_audio_descriptor_size = buf_size + 6;
+                } else {
+                    opus_audio_descriptor_size = 4;
+                }
+                /* 6 bytes registration descriptor, 4 bytes Opus audio descriptor
+                 * (unless channel_config_code is 0x81)
+                 */
+                if (q - data > SECTION_LENGTH - 6 - opus_audio_descriptor_size) {
                     err = 1;
                     break;
                 }
@@ -404,8 +436,8 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
                 *q++ = 's';
 
                 *q++ = 0x7f; /* DVB extension descriptor */
-                *q++ = 2;
-                *q++ = 0x80;
+                *q++ = opus_audio_descriptor_size - 2; /* descriptor_length */
+                *q++ = 0x80; /* descriptor_tag_extension */
 
                 if (st->codecpar->extradata && st->codecpar->extradata_size >= 19) {
                     if (st->codecpar->extradata[18] == 0 && st->codecpar->channels <= 2) {
@@ -452,9 +484,32 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
                             *q++ = 0xff;
                         }
                     } else {
-                        /* Unsupported */
-                        av_log(s, AV_LOG_ERROR, "Unsupported Opus channel mapping for family %d", st->codecpar->extradata[18]);
-                        *q++ = 0xff;
+                        /* mapping family 255 , set channel_config_code to 0x81 except for dual-mono */
+                        if (st->codecpar->extradata[18] == 255) {
+                            /* dual mono */
+                            if (st->codecpar->channels == 2 &&
+                                st->codecpar->extradata[19] == 1) {
+                                *q++ = 0x00;
+                            } else if (st->codecpar->channels == 2 &&
+                                       st->codecpar->extradata[19] == 2) {
+                                *q++ = 0x80;
+                            } else {
+                            /* application defined channel configuration 0x81 */
+                                *q++ = 0x81;
+                                *q++ = st->codecpar->channels;
+                                *q++ = st->codecpar->extradata[18];
+                                for (i = 0; i < buf_size; i++) {
+                                    *q++ = *(buf + i);
+                                }
+                                av_freep(&buf);
+                            }
+                        } else {
+                            /* Unsupported */
+                            av_log(s, AV_LOG_ERROR,
+                                   "Unsupported Opus channel mapping for family %d",
+                                   st->codecpar->extradata[18]);
+                            *q++ = 0xff;
+                        }
                     }
                 } else if (st->codecpar->channels <= 2) {
                     /* Assume RTP mapping family */
