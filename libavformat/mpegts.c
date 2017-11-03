@@ -1633,7 +1633,7 @@ static const uint8_t opus_stream_cnt[9] = {
     1, 1, 1, 2, 2, 3, 4, 4, 5,
 };
 
-static const uint8_t opus_channel_map[8][8] = {
+static const uint8_t opus_channel_map_a[8][8] = {
     { 0 },
     { 0,1 },
     { 0,2,1 },
@@ -1644,6 +1644,17 @@ static const uint8_t opus_channel_map[8][8] = {
     { 0,6,1,2,3,4,5,7 },
 };
 
+static const uint8_t opus_channel_map_b[8][8] = {
+    { 0 },
+    { 0,1 },
+    { 0,1,2 },
+    { 0,1,2,3 },
+    { 0,1,2,3,4 },
+    { 0,1,2,3,4,5 },
+    { 0,1,2,3,4,5,6 },
+    { 0,1,2,3,4,5,6,7 },
+};
+
 int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type,
                               const uint8_t **pp, const uint8_t *desc_list_end,
                               Mp4Descr *mp4_descr, int mp4_descr_count, int pid,
@@ -1651,6 +1662,8 @@ int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type
 {
     const uint8_t *desc_end;
     int desc_len, desc_tag, desc_es_id, ext_desc_tag, channels, channel_config_code;
+    uint8_t channel_count, mapping_family, stream_count, coupled_stream_count, channel_mapping, sc_csc;
+    GetBitContext gb;
     char language[252];
     int i;
 
@@ -1871,26 +1884,73 @@ int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type
         if (st->codecpar->codec_id == AV_CODEC_ID_OPUS &&
             ext_desc_tag == 0x80) { /* User defined (provisional Opus) */
             if (!st->codecpar->extradata) {
-                st->codecpar->extradata = av_mallocz(sizeof(opus_default_extradata) +
-                                                     AV_INPUT_BUFFER_PADDING_SIZE);
-                if (!st->codecpar->extradata)
-                    return AVERROR(ENOMEM);
-
-                st->codecpar->extradata_size = sizeof(opus_default_extradata);
-                memcpy(st->codecpar->extradata, opus_default_extradata, sizeof(opus_default_extradata));
-
                 channel_config_code = get8(pp, desc_end);
                 if (channel_config_code < 0)
                     return AVERROR_INVALIDDATA;
+
+                if (channel_config_code != 0x81) {
+                    st->codecpar->extradata = av_mallocz(sizeof(opus_default_extradata) +
+                                                         AV_INPUT_BUFFER_PADDING_SIZE);
+                    if (!st->codecpar->extradata)
+                        return AVERROR(ENOMEM);
+                    st->codecpar->extradata_size = sizeof(opus_default_extradata);
+                    memcpy(st->codecpar->extradata, opus_default_extradata,
+                           sizeof(opus_default_extradata));
+                }
+
                 if (channel_config_code <= 0x8) {
                     st->codecpar->extradata[9]  = channels = channel_config_code ? channel_config_code : 2;
                     st->codecpar->extradata[18] = channel_config_code ? (channels > 2) : /* Dual Mono */ 255;
                     st->codecpar->extradata[19] = opus_stream_cnt[channel_config_code];
                     st->codecpar->extradata[20] = opus_coupled_stream_cnt[channel_config_code];
-                    memcpy(&st->codecpar->extradata[21], opus_channel_map[channels - 1], channels);
-                } else {
-                    avpriv_request_sample(fc, "Opus in MPEG-TS - channel_config_code > 0x8");
-                }
+                    memcpy(&st->codecpar->extradata[21], opus_channel_map_a[channels - 1], channels);
+                } else if (channel_config_code == 0x81) {
+                    channel_count = get8(pp, desc_end);
+                    mapping_family = get8(pp, desc_end);
+                    if (channel_count < 0)
+                        return AVERROR_INVALIDDATA;
+                    if (mapping_family < 0)
+                        return AVERROR_INVALIDDATA;
+                    st->codecpar->extradata_size = 22 + channel_count;
+                    st->codecpar->extradata = av_mallocz(st->codecpar->extradata_size +
+                                                         AV_INPUT_BUFFER_PADDING_SIZE);
+                    if (!st->codecpar->extradata)
+                        return AVERROR(ENOMEM);
+                    for (i = 0; i < 9; i++) {
+                        st->codecpar->extradata[i] = opus_default_extradata[i];
+                    }
+                    st->codecpar->extradata[9] = channel_count;
+                    st->codecpar->extradata[18] = mapping_family;
+                    init_get_bits(&gb, *pp, (channel_count + 2) * 8);
+                    stream_count = get_bits(&gb, av_ceil_log2_c(channel_count)) + 1;
+                    coupled_stream_count = get_bits(&gb, av_ceil_log2_c(stream_count + 1));
+                    sc_csc = stream_count + coupled_stream_count;
+                    if (stream_count > channel_count)
+                        return AVERROR_INVALIDDATA;
+                    if (coupled_stream_count > stream_count)
+                        return AVERROR_INVALIDDATA;
+                    st->codecpar->extradata[19] = stream_count;
+                    st->codecpar->extradata[20] = coupled_stream_count;
+                    for (i = 0; i < channel_count; i++) {
+                        channel_mapping = get_bits(&gb, av_ceil_log2_c(sc_csc + 1));
+                        if (channel_mapping > sc_csc
+                            || channel_mapping > (1 << sc_csc + 1) -1)
+                            return AVERROR_INVALIDDATA;
+                        st->codecpar->extradata[21 + i] = channel_mapping;
+                    }
+                } else if ((channel_config_code >= 0x82) &&
+                           (channel_config_code <= 0x88)) {
+                    channels = channel_config_code - 0x80;
+                    st->codecpar->extradata[9] = channels;
+                    st->codecpar->extradata[18] = 1;
+                    st->codecpar->extradata[19] = channels;
+                    st->codecpar->extradata[20] = 0;
+                    memcpy(&st->codecpar->extradata[21],
+                           opus_channel_map_b[channels - 1], channels);
+                 } else {
+                    avpriv_request_sample(fc, "Opus in MPEG-TS - channel_config_code %i",
+                                          channel_config_code);
+                 }
                 st->need_parsing = AVSTREAM_PARSE_FULL;
                 st->internal->need_context_update = 1;
             }
