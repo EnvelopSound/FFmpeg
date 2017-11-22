@@ -113,6 +113,8 @@ typedef struct OptionsContext {
     int        nb_frame_sizes;
     SpecifierOpt *frame_pix_fmts;
     int        nb_frame_pix_fmts;
+    SpecifierOpt *channel_layouts;
+    int        nb_channel_layouts;
 
     /* input options */
     int64_t input_ts_offset;
@@ -614,6 +616,7 @@ extern int vstats_version;
 extern const AVIOInterruptCB int_cb;
 
 extern const OptionDef options[];
+extern const OptionDef channel_layout_option[];
 extern const HWAccel hwaccels[];
 extern AVBufferRef *hw_device_ctx;
 #if CONFIG_QSV
