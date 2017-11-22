@@ -248,6 +248,19 @@ int parse_option(void *optctx, const char *opt, const char *arg,
                  const OptionDef *options);
 
 /**
+* Parse the duplicate of one given option (carrying same name). Some options may
+* need to be dealt with func_arg as well as OPT_SPEC.
+* Ex: channel_layout is parsed with func_arg (allowing strings as well as numerals
+* as arguments); but it can be needed also as an OPT_SPEC.
+* The duplicate option should be defined in an OptionDef table right after the main
+* option and carries the same name.
+*
+* @return on success 1 if arg was consumed, 0 otherwise; negative number on error
+*/
+int parse_duplicate_option(void *optctx, const char *opt, const char *arg,
+    const OptionDef *options);
+
+/**
  * An option extracted from the commandline.
  * Cannot use AVDictionary because of options like -map which can be
  * used multiple times.

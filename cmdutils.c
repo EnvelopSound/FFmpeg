@@ -374,6 +374,24 @@ int parse_option(void *optctx, const char *opt, const char *arg,
     return !!(po->flags & HAS_ARG);
 }
 
+int parse_duplicate_option(void *optctx, const char *opt, const char *arg,
+    const OptionDef *options)
+{
+    const OptionDef *po;
+    int ret;
+
+    po = find_option(options, opt) + 1;
+    if (po->name != (po - 1)->name) {
+        av_log(NULL, AV_LOG_ERROR, "Option '%s' has no duplicate.\n", opt);
+        return AVERROR(EINVAL);
+    }
+    ret = write_option(optctx, po, opt, arg);
+    if (ret < 0)
+        return ret;
+
+    return !!(po->flags & HAS_ARG);
+}
+
 void parse_options(void *optctx, int argc, char **argv, const OptionDef *options,
                    void (*parse_arg_function)(void *, const char*))
 {
