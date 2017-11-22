@@ -1723,6 +1723,7 @@ static OutputStream *new_audio_stream(OptionsContext *o, AVFormatContext *oc, in
         char *sample_fmt = NULL;
 
         MATCH_PER_STREAM_OPT(audio_channels, i, audio_enc->channels, oc, st);
+        MATCH_PER_STREAM_OPT(channel_layouts, ui64, audio_enc->channel_layout, oc, st);
 
         MATCH_PER_STREAM_OPT(sample_fmts, str, sample_fmt, oc, st);
         if (sample_fmt &&
@@ -2958,7 +2959,7 @@ static int opt_channel_layout(void *optctx, const char *opt, const char *arg)
     char layout_str[32];
     char *stream_str;
     char *ac_str;
-    int ret, channels, ac_str_size;
+    int ret, channels, ac_str_size, stream_str_size;
     uint64_t layout;
 
     layout = av_get_channel_layout(arg);
@@ -2970,12 +2971,30 @@ static int opt_channel_layout(void *optctx, const char *opt, const char *arg)
     ret = opt_default_new(o, opt, layout_str);
     if (ret < 0)
         return ret;
+    stream_str = strchr(opt, ':');
+    stream_str_size = (stream_str ? strlen(stream_str) : 0);
+    /* set duplicate 'channel_layout' option in SpecifierOpt,
+     *  enabling access to channel layout through MATCH_PER_STREAM_OPT
+     */
+    ac_str_size = 22 + stream_str_size;
+    ac_str = av_mallocz(ac_str_size);
+    if (!ac_str) {
+        return AVERROR(ENOMEM);
+    }
+    av_strlcpy(ac_str, "channel_layout", 22);
+    if (stream_str) {
+        av_strlcat(ac_str, stream_str, ac_str_size);
+    }
+    ret = parse_duplicate_option(o, ac_str, layout_str, options);
+    av_free(ac_str);
+    if (ret < 0) {
+        return ret;
+    }
 
     /* set 'ac' option based on channel layout */
     channels = av_get_channel_layout_nb_channels(layout);
     snprintf(layout_str, sizeof(layout_str), "%d", channels);
-    stream_str = strchr(opt, ':');
-    ac_str_size = 3 + (stream_str ? strlen(stream_str) : 0);
+    ac_str_size = 3 + stream_str_size;
     ac_str = av_mallocz(ac_str_size);
     if (!ac_str)
         return AVERROR(ENOMEM);
@@ -3524,6 +3543,9 @@ const OptionDef options[] = {
     { "channel_layout", OPT_AUDIO | HAS_ARG  | OPT_EXPERT | OPT_PERFILE |
                         OPT_INPUT | OPT_OUTPUT,                                    { .func_arg = opt_channel_layout },
         "set channel layout", "layout" },
+    { "channel_layout", OPT_AUDIO | HAS_ARG | OPT_INT64 | OPT_SPEC |
+                               OPT_INPUT | OPT_OUTPUT,                             { .off = OFFSET(channel_layouts) },
+        "set channel layout with uint64", "layout_uint64" }, // allows storage of option in SpecifierOpt
     { "af",             OPT_AUDIO | HAS_ARG  | OPT_PERFILE | OPT_OUTPUT,           { .func_arg = opt_audio_filters },
         "set audio filters", "filter_graph" },
     { "guess_layout_max", OPT_AUDIO | HAS_ARG | OPT_INT | OPT_SPEC | OPT_EXPERT | OPT_INPUT, { .off = OFFSET(guess_layout_max) },

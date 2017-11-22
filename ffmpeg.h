@@ -112,6 +112,8 @@ typedef struct OptionsContext {
     int        nb_frame_sizes;
     SpecifierOpt *frame_pix_fmts;
     int        nb_frame_pix_fmts;
+    SpecifierOpt *channel_layouts;
+    int        nb_channel_layouts;
 
     /* input options */
     int64_t input_ts_offset;
