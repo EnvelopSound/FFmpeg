@@ -1816,6 +1816,7 @@ static OutputStream *new_audio_stream(OptionsContext *o, AVFormatContext *oc, in
         char *sample_fmt = NULL;
 
         MATCH_PER_STREAM_OPT(audio_channels, i, audio_enc->channels, oc, st);
+        MATCH_PER_STREAM_OPT(channel_layouts, ui64, audio_enc->channel_layout, oc, st);
 
         MATCH_PER_STREAM_OPT(sample_fmts, str, sample_fmt, oc, st);
         if (sample_fmt &&
@@ -2448,7 +2449,11 @@ loop_end:
                            (count + 1) * sizeof(*f->sample_rates));
                 }
                 if (ost->enc_ctx->channels) {
-                    f->channel_layout = av_get_default_channel_layout(ost->enc_ctx->channels);
+                    if (ost->enc_ctx->channel_layout) {
+                        f->channel_layout = ost->enc_ctx->channel_layout;
+                    } else {
+                        f->channel_layout = av_get_default_channel_layout(ost->enc_ctx->channels);
+                    }
                 } else if (ost->enc->channel_layouts) {
                     count = 0;
                     while (ost->enc->channel_layouts[count])
@@ -3024,8 +3029,8 @@ static int opt_channel_layout(void *optctx, const char *opt, const char *arg)
     OptionsContext *o = optctx;
     char layout_str[32];
     char *stream_str;
-    char *ac_str;
-    int ret, channels, ac_str_size;
+    char *ac_str, *cm_str;
+    int ret, channels, ac_str_size, stream_str_size;
     uint64_t layout;
 
     layout = av_get_channel_layout(arg);
@@ -3037,12 +3042,31 @@ static int opt_channel_layout(void *optctx, const char *opt, const char *arg)
     ret = opt_default_new(o, opt, layout_str);
     if (ret < 0)
         return ret;
+    stream_str = strchr(opt, ':');
+    stream_str_size = (stream_str ? strlen(stream_str) : 0);
+    /* Set 'channelmask' option which stores channel_layout as bitmask
+     * (uint64) in SpecifierOpt, enabling access to channel_layout through
+     * MATCH_PER_STREAM_OPT.
+     */
+    ac_str_size = 12 + stream_str_size;
+    ac_str = av_mallocz(ac_str_size);
+    if (!ac_str) {
+        return AVERROR(ENOMEM);
+    }
+    av_strlcpy(ac_str, "channelmask", 12);
+    if (stream_str) {
+        av_strlcat(ac_str, stream_str, ac_str_size);
+    }
+    ret = parse_option(o, ac_str, layout_str, options);
+    av_free(ac_str);
+    if (ret < 0) {
+        return ret;
+    }
 
     /* set 'ac' option based on channel layout */
     channels = av_get_channel_layout_nb_channels(layout);
     snprintf(layout_str, sizeof(layout_str), "%d", channels);
-    stream_str = strchr(opt, ':');
-    ac_str_size = 3 + (stream_str ? strlen(stream_str) : 0);
+    ac_str_size = 3 + stream_str_size;
     ac_str = av_mallocz(ac_str_size);
     if (!ac_str)
         return AVERROR(ENOMEM);
@@ -3595,6 +3619,10 @@ const OptionDef options[] = {
     { "channel_layout", OPT_AUDIO | HAS_ARG  | OPT_EXPERT | OPT_PERFILE |
                         OPT_INPUT | OPT_OUTPUT,                                    { .func_arg = opt_channel_layout },
         "set channel layout", "layout" },
+    /* internal OptionDef used to enable storage of channel_layout option in a SpecifierOpt */
+    { "channelmask",    OPT_AUDIO | HAS_ARG | OPT_INT64 | OPT_SPEC |
+                        OPT_INPUT | OPT_OUTPUT,                                    { .off = OFFSET(channel_layouts) },
+       "stores channel layout in SpecifierOpt ", "channelmask" },
     { "af",             OPT_AUDIO | HAS_ARG  | OPT_PERFILE | OPT_OUTPUT,           { .func_arg = opt_audio_filters },
         "set audio filters", "filter_graph" },
     { "guess_layout_max", OPT_AUDIO | HAS_ARG | OPT_INT | OPT_SPEC | OPT_EXPERT | OPT_INPUT, { .off = OFFSET(guess_layout_max) },

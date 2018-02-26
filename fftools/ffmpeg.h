@@ -107,6 +107,8 @@ typedef struct OptionsContext {
     int        nb_audio_channels;
     SpecifierOpt *audio_sample_rate;
     int        nb_audio_sample_rate;
+    SpecifierOpt *channel_layouts;
+    int        nb_channel_layouts;
     SpecifierOpt *frame_rates;
     int        nb_frame_rates;
     SpecifierOpt *frame_sizes;
