@@ -2267,7 +2267,7 @@ typedef struct AVCodecContext {
      * - encoding: unused
      * - decoding: Set by user.
      */
-    uint64_t request_channel_layout;
+    uint64_t  request_channel_layout;
 
     /**
      * Type of service that the audio stream conveys.
