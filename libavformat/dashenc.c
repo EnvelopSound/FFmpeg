@@ -823,6 +823,7 @@ static int write_adaptation_set(AVFormatContext *s, AVIOContext *out, int as_ind
     if (lang)
         avio_printf(out, " lang=\"%s\"", lang->value);
     avio_printf(out, ">\n");
+    avio_printf(out, "\t\t\t<Accessibility schemeIdUri=\"urn:scte:dash:cc:cea-608:2015\" value=\"CC1=zxx;CC3=zxx\"/>\n");
 
     if (!final && c->ldash && as->max_frag_duration && !(c->profile & MPD_PROFILE_DVB))
         avio_printf(out, "\t\t\t<Resync dT=\"%"PRId64"\" type=\"0\"/>\n", as->max_frag_duration);
